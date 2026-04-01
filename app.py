@@ -4,7 +4,7 @@ from PyPDF2 import PdfReader
 
 # 1. Configuración del Modelo (Versión 2026)
 # Usamos el modelo 2.0 que es el vigente y gratuito en AI Studio
-MODEL_NAME = 'gemini-2.0-flash' 
+MODEL_NAME = 'gemini-2.0-flash-lite' 
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
