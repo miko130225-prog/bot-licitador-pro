@@ -2,8 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 from PyPDF2 import PdfReader
 
-# --- CONFIGURACIÓN DEL MOTOR DE IA ---
-# Usamos gemini-2.5-flash-lite por su alta cuota para procesar PDFs extensos
+# --- CONFIGURACIÓN ---
 MODELO_TÉCNICO = 'gemini-2.5-flash-lite'
 
 try:
@@ -11,31 +10,14 @@ try:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(MODELO_TÉCNICO)
 except Exception as e:
-    st.error("Error: Configura la API Key en los Secrets de Streamlit.")
+    st.error("Error: Configura la API Key en los Secrets.")
 
-# --- CONFIGURACIÓN DE INTERFAZ ---
-st.set_page_config(page_title="Licitador Pro - Análisis de Bases", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Licitador Pro - Selección de Perfil", page_icon="⚖️", layout="wide")
 
-# Estilo profesional y limpio
-st.markdown("""
-    <style>
-    .main { background-color: #F8F9FA; }
-    .stButton>button { 
-        width: 100%;
-        background-color: #004A99; 
-        color: white; 
-        border-radius: 5px;
-    }
-    .stButton>button:hover { background-color: #003366; color: white; }
-    h1 { color: #1A1A1A; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- LÓGICA DE PERSISTENCIA (SESSION STATE) ---
+if 'perfil_usuario' not in st.session_state:
+    st.session_state.perfil_usuario = None
 
-st.title("⚖️ Analista Experto en Licitaciones Públicas")
-st.subheader("Procesamiento de Bases de Requisitos - Estado Peruano")
-st.markdown("---")
-
-# --- LÓGICA DE EXTRACCIÓN ---
 def extraer_contenido_pdf(archivos):
     texto_total = ""
     for archivo in archivos:
@@ -44,61 +26,77 @@ def extraer_contenido_pdf(archivos):
             for pagina in lector.pages:
                 texto_total += pagina.extract_text() + "\n"
         except Exception as e:
-            st.error(f"Error al leer el archivo {archivo.name}: {e}")
+            st.error(f"Error al leer {archivo.name}: {e}")
     return texto_total
 
-# --- ESTRUCTURA DE LA APLICACIÓN ---
+st.title("⚖️ Analista y Generador de Licitaciones")
+st.markdown("---")
+
 col_archivo, col_resultados = st.columns([1, 2])
 
 with col_archivo:
-    st.header("📂 Documentación")
-    archivos_subidos = st.file_uploader("Cargar Bases Administrativas (PDF)", type="pdf", accept_multiple_files=True)
+    st.header("📂 1. Cargar Bases")
+    archivos_subidos = st.file_uploader("Subir Bases (PDF)", type="pdf", accept_multiple_files=True)
     
     if archivos_subidos:
-        with st.spinner("Extrayendo texto técnico..."):
+        with st.spinner("Procesando bases..."):
             contexto_legal = extraer_contenido_pdf(archivos_subidos)
-        st.success(f"Análisis listo: {len(archivos_subidos)} documento(s) cargado(s).")
+        st.success("Bases cargadas correctamente.")
 
 with col_resultados:
-    st.header("📝 Análisis de Cumplimiento")
+    st.header("📝 2. Definir Perfil de Postulación")
     
     if archivos_subidos:
-        # BOTÓN 1: Identificación de Perfil Legal
-        if st.button("🔍 Determinar Perfil Legal (Persona Natural/Jurídica)"):
+        # BOTÓN DE ANÁLISIS INICIAL
+        if st.button("🔍 Analizar Requisitos de las Bases"):
             prompt_perfil = (
-                "Actúa como un experto en contrataciones del Estado Peruano. "
-                "Analiza exhaustivamente las bases adjuntas y responde con precisión técnica: "
-                "1. ¿El postor puede participar como Persona Natural o es exclusivo para Persona Jurídica? "
-                "2. Enumera los requisitos de capacidad legal (RNP, Vigencia de Poder, DNI). "
-                "3. Indica si existen impedimentos o restricciones específicas mencionadas en el pliego."
+                "Analiza estas bases y dime brevemente: 1. ¿Quién puede postular? 2. ¿Qué documentos piden? "
+                "Sé directo para que el usuario pueda elegir su perfil a continuación."
             )
-            with st.spinner("Procesando criterios de evaluación..."):
+            with st.spinner("Analizando..."):
                 try:
                     respuesta = model.generate_content([prompt_perfil, contexto_legal])
-                    st.info("### Resultado del Análisis de Perfil")
-                    st.markdown(respuesta.text)
-                except Exception as e:
-                    if "429" in str(e):
-                        st.error("⏳ Límite de cuota alcanzado. Por favor, reintente en 30 segundos debido a la extensión del PDF.")
-                    else:
-                        st.error(f"Error en la consulta: {e}")
-
-        # BOTÓN 2: Cuestionario de Datos para Anexos
-        if st.button("📋 Generar Check-list para Anexos"):
-            prompt_anexos = (
-                "Basado en las bases cargadas, genera un cuestionario con los datos específicos que el usuario "
-                "debe proporcionar para completar correctamente el Anexo de Datos del Postor y el Anexo de Experiencia. "
-                "No incluyas datos que ya figuren claramente en las bases."
-            )
-            with st.spinner("Identificando campos requeridos..."):
-                try:
-                    respuesta = model.generate_content([prompt_anexos, contexto_legal])
-                    st.warning("### Datos faltantes para el expediente:")
-                    st.markdown(respuesta.text)
+                    st.info(respuesta.text)
                 except Exception as e:
                     st.error(f"Error: {e}")
+
+        st.markdown("---")
+        
+        # AQUÍ ESTÁ EL CAMBIO: Selector de Perfil para el Usuario
+        st.subheader("🎯 Define tu Perfil para generar documentos")
+        perfil_elegido = st.radio(
+            "Selecciona cómo te presentarás a esta licitación:",
+            ["No definido", "Persona Natural", "Persona Jurídica (Empresa Nacional)", "Persona Jurídica (Extranjera)", "Consorcio"],
+            index=0
+        )
+
+        if perfil_elegido != "No definido":
+            st.session_state.perfil_usuario = perfil_elegido
+            st.success(f"Perfil configurado como: **{perfil_elegido}**")
+            
+            # BOTÓN DINÁMICO: Generar Check-list específico
+            if st.button(f"📋 Generar Lista de Documentos para {perfil_elegido}"):
+                prompt_especifico = (
+                    f"El usuario ha decidido postular como **{perfil_elegido}**. "
+                    f"Basado en las bases leídas, genera la lista EXACTA de documentos que debe preparar "
+                    f"esta persona/entidad. No menciones requisitos de otros perfiles."
+                )
+                with st.spinner("Filtrando requisitos para tu perfil..."):
+                    res = model.generate_content([prompt_especifico, contexto_legal])
+                    st.warning(f"### Documentos Obligatorios para {perfil_elegido}")
+                    st.markdown(res.text)
+
+            # BOTÓN PARA GENERAR ANEXO (Simulación de texto)
+            if st.button(f"✍️ Redactar Borrador de Anexo 1 ({perfil_elegido})"):
+                prompt_anexo = (
+                    f"Redacta un borrador del Anexo 1 (Datos del Postor) adaptado para **{perfil_elegido}** "
+                    f"siguiendo el formato de las bases. Deja espacios en blanco [ ] donde el usuario deba completar su RUC, Nombre, etc."
+                )
+                with st.spinner("Redactando borrador legal..."):
+                    res = model.generate_content([prompt_anexo, contexto_legal])
+                    st.code(res.text, language="text")
     else:
-        st.info("Cargue las bases en formato PDF para iniciar el análisis automático de requisitos.")
+        st.info("Sube las bases para habilitar la selección de perfil.")
 
 st.markdown("---")
-st.caption("Herramienta de soporte para licitaciones públicas | Modelo: Gemini 2.5 Flash-Lite")
+st.caption("Filtro dinámico de perfil legal | Modelo: Gemini 2.5 Flash-Lite")
