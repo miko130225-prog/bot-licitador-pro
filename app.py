@@ -3,94 +3,118 @@ import google.generativeai as genai
 from PyPDF2 import PdfReader
 import time
 
-# --- CONFIGURACIÓN DE MODELO 2026 ---
-# Usamos 'flash-lite' para evitar el bloqueo de cuota 0 del modelo 'flash' normal
-MODEL_NAME = 'gemini-2.0-flash-lite' 
+# --- CONFIGURACIÓN INICIAL ---
+# Usamos la versión Lite que es la más estable para el Free Tier en 2026
+MODELO_PRINCIPAL = 'gemini-2.0-flash-lite'
 
 try:
-    # Obtener API Key de los Secrets de Streamlit
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(MODEL_NAME)
+    model = genai.GenerativeModel(MODELO_PRINCIPAL)
 except Exception as e:
-    st.error(f"Configura tu API Key en los Secrets de Streamlit: {e}")
+    st.error("⚠️ Configura tu API Key en los 'Secrets' de Streamlit Cloud.")
 
-# Configuración de página con estilo "Tropical/Tiki" (Warm colors)
-st.set_page_config(page_title="Asistente de Licitaciones Pro", page_icon="🌴", layout="centered")
+# --- INTERFAZ TROPICAL/ESTADO PERUANO ---
+st.set_page_config(page_title="Licitador Pro - Perú", page_icon="🇵🇪", layout="wide")
 
-# Estilo visual personalizado
+# Estilo visual cálido (Amarillo/Tropical)
 st.markdown("""
     <style>
-    .main { background-color: #FFF9E6; }
-    .stButton>button { background-color: #FFB300; color: white; border-radius: 10px; }
+    .main { background-color: #FFFEF2; }
+    .stButton>button { background-color: #FFC107; color: black; font-weight: bold; border-radius: 8px; }
+    .stAlert { border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🗿 Analista de Licitaciones (Modo Eficiente)")
-st.subheader("Carga las bases y deja que la IA trabaje")
+st.title("🤖 Analista de Licitaciones Pro")
+st.caption("Especializado en el marco legal del Estado Peruano y Juegos Bolivarianos 2026")
+
+# --- SECCIÓN DE DIAGNÓSTICO DE CUOTAS ---
+with st.expander("🛠️ Diagnóstico de mi API Key (Ver cuotas y modelos)"):
+    if st.button("Listar modelos con consulta gratuita"):
+        try:
+            modelos_disponibles = []
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    modelos_disponibles.append(m.name.replace('models/', ''))
+            st.write("✅ Tu cuenta permite usar estos modelos:")
+            st.json(modelos_disponibles)
+        except Exception as e:
+            st.error(f"No se pudo conectar con Google: {e}")
+
 st.markdown("---")
 
-# Función para extraer y limpiar texto
-def extraer_texto(archivos_subidos):
-    texto_completo = ""
-    for archivo in archivos_subidos:
+# --- FUNCIONES TÉCNICAS ---
+def extraer_texto_pdf(archivos):
+    texto_acumulado = ""
+    for archivo in archivos:
         try:
-            reader = PdfReader(archivo)
-            for pagina in reader.pages:
-                # Limpiamos espacios extra para ahorrar tokens de cuota
-                texto_completo += pagina.extract_text().strip() + "\n"
+            pdf = PdfReader(archivo)
+            for pagina in pdf.pages:
+                texto_acumulado += pagina.extract_text() + "\n"
         except Exception as e:
             st.error(f"Error al leer {archivo.name}: {e}")
-    return texto_completo
+    return texto_acumulado
 
-# --- INTERFAZ DE CARGA ---
-archivos = st.file_uploader("Adjunta los PDFs de las Bases (Juegos Bolivarianos, etc.)", type="pdf", accept_multiple_files=True)
+def consultar_gemini_con_retry(prompt, contexto):
+    """Intenta la consulta y maneja el error de cuota 429"""
+    try:
+        # Enviamos el prompt y el texto del PDF
+        response = model.generate_content([prompt, contexto])
+        return response.text
+    except Exception as e:
+        if "429" in str(e):
+            return "ERROR_CUOTA"
+        else:
+            return f"Error inesperado: {str(e)}"
 
-if archivos:
-    with st.spinner("Procesando documentos..."):
-        contexto_bases = extraer_texto(archivos)
+# --- CUERPO DE LA APP ---
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.header("📂 Carga de Bases")
+    archivos_pdf = st.file_uploader("Sube los PDFs de la licitación", type="pdf", accept_multiple_files=True)
     
-    st.success(f"✅ Se han procesado {len(archivos)} archivo(s).")
+    if archivos_pdf:
+        with st.spinner("Leyendo documentos..."):
+            texto_bases = extraer_texto_pdf(archivos_pdf)
+        st.success(f"Lectura completada: {len(texto_bases)} caracteres detectados.")
 
-    # BOTÓN: Identificación de Perfil
-    if st.button("🔍 Identificar Perfil Legal"):
-        prompt = (
-            "Eres un experto senior en contrataciones del Estado Peruano. "
-            "Analiza estas bases de licitación y responde con precisión: "
-            "1. ¿El postor puede ser Persona Natural o Jurídica? "
-            "2. Lista los documentos de identidad, vigencia de poder o RNP solicitados. "
-            "3. ¿Qué garantías (fiel cumplimiento o seriedad) se exigen?"
-        )
-        
-        with st.spinner("Consultando a Gemini 2.0 Lite..."):
-            try:
-                # Ejecución de la consulta
-                response = model.generate_content([prompt, contexto_bases])
-                st.info("### ⚖️ Análisis Legal de las Bases")
-                st.markdown(response.text)
-            except Exception as e:
-                # Manejo inteligente del error 429 de cuota
-                if "429" in str(e):
-                    st.error("⚠️ **Cuota de Google excedida.** Por favor, espera 60 segundos antes de volver a intentar. Esto sucede porque el archivo es muy pesado para el plan gratuito.")
-                    st.warning("Consejo: Prueba subiendo solo las páginas de 'Requisitos del Postor' del PDF.")
+with col2:
+    st.header("⚖️ Análisis y Decisiones")
+    
+    if archivos_pdf:
+        # BOTÓN 1: Perfil Legal
+        if st.button("🔍 Identificar Perfil Legal (Natural/Jurídica)"):
+            prompt = (
+                "Analiza estas bases del Estado Peruano. Dime si el postor puede ser Persona Natural o Jurídica. "
+                "Detalla requisitos de RNP, Vigencia de Poder y si hay bonos para MYPEs. Sé muy estructurado."
+            )
+            with st.spinner("Analizando bases..."):
+                resultado = consultar_gemini_con_retry(prompt, texto_bases)
+                
+                if resultado == "ERROR_CUOTA":
+                    st.error("⏳ **Cuota Excedida (Error 429).** Google ha pausado las consultas gratuitas momentáneamente.")
+                    st.warning("Espera 30 segundos y vuelve a presionar el botón. Esto ocurre porque el PDF es muy extenso.")
                 else:
-                    st.error(f"Se produjo un error: {e}")
+                    st.info("### Resultado del Análisis")
+                    st.markdown(resultado)
 
-    # BOTÓN: Generar Anexo 1
-    if st.button("📝 Preparar Datos para Anexos"):
-        prompt_anexos = (
-            "Basado en estas bases, hazme una lista de los datos que me faltan para llenar el Anexo 1. "
-            "Pídemelos en formato de cuestionario simple."
-        )
-        try:
-            response = model.generate_content([prompt_anexos, contexto_bases])
-            st.warning("### Responde esto para completar tu expediente:")
-            st.markdown(response.text)
-        except Exception as e:
-            st.error(f"Error: {e}")
-
-else:
-    st.info("👋 Sube tus bases en PDF para comenzar.")
+        # BOTÓN 2: Cuestionario para Anexos
+        if st.button("📝 Generar Cuestionario para Anexos"):
+            prompt = (
+                "Basado en estas bases, genera una lista de preguntas para que el usuario me dé los datos "
+                "necesarios para llenar el Anexo 1 (Datos del Postor) y el Anexo de Experiencia."
+            )
+            with st.spinner("Generando preguntas..."):
+                resultado = consultar_gemini_con_retry(prompt, texto_bases)
+                if resultado == "ERROR_CUOTA":
+                    st.error("⏳ Error de cuota. Por favor reintenta en 30 segundos.")
+                else:
+                    st.warning("### Completa esta información:")
+                    st.markdown(resultado)
+    else:
+        st.info("Sube un archivo PDF en la columna de la izquierda para habilitar el análisis.")
 
 st.markdown("---")
-st.caption("Powered by Gemini 2.0 Flash-Lite | Optimizado para el Estado Peruano 2026")
+st.caption("Desarrollado para la gestión eficiente de licitaciones públicas | Modelo: " + MODELO_PRINCIPAL)
