@@ -2,52 +2,78 @@ import streamlit as st
 import google.generativeai as genai
 from PyPDF2 import PdfReader
 
-# Configuración de la API desde los Secrets de Streamlit
-api_key = st.secrets["GEMINI_API_KEY"]
-genai.configure(api_key=api_key)
+# 1. Configuración del Modelo (Versión 2026)
+# Usamos el modelo 2.0 que es el vigente y gratuito en AI Studio
+MODEL_NAME = 'gemini-2.0-flash' 
 
-# Usamos Gemini 2.5 Flash por su eficiencia en bases legales
-model = genai.GenerativeModel('gemini-1.5-flash') # Puedes probar 'gemini-1.5-flash' o el que tengas habilitado
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(MODEL_NAME)
+except Exception as e:
+    st.error(f"Error al configurar la API Key: {e}")
 
-st.set_page_config(page_title="Analista Licitaciones Perú", page_icon="⚖️")
-st.title("🤖 Asistente de Licitaciones Pro")
+st.set_page_config(page_title="Licitador Pro Perú", page_icon="⚖️", layout="centered")
 
-def leer_pdf(file):
-    reader = PdfReader(file)
-    texto = ""
-    for page in reader.pages:
-        texto += page.extract_text()
-    return texto
+st.title("🤖 Analista de Licitaciones Pro")
+st.markdown("---")
 
-# --- INTERFAZ ---
-archivos = st.file_uploader("Carga las bases (Juegos Bolivarianos, etc.)", type="pdf", accept_multiple_files=True)
+# Función optimizada para extraer texto de los PDF
+def extraer_texto(archivos_subidos):
+    texto_completo = ""
+    for archivo in archivos_subidos:
+        try:
+            reader = PdfReader(archivo)
+            for pagina in reader.pages:
+                texto_completo += pagina.extract_text() + "\n"
+        except Exception as e:
+            st.error(f"No se pudo leer el archivo {archivo.name}: {e}")
+    return texto_completo
+
+# --- INTERFAZ DE CARGA ---
+archivos = st.file_uploader("Sube las Bases de Requisitos (PDF)", type="pdf", accept_multiple_files=True)
 
 if archivos:
-    texto_total = ""
-    for f in archivos:
-        texto_total += leer_pdf(f)
+    with st.spinner("Procesando documentos..."):
+        contexto_bases = extraer_texto(archivos)
     
-    st.success("Documentos procesados.")
+    st.success(f"Se han procesado {len(archivos)} archivo(s).")
 
-    # Botón 1: Análisis de Perfil
-    if st.button("Identificar Perfil Legal"):
-        prompt = (
-            "Eres un experto en contrataciones del estado peruano. Analiza estas bases y "
-            "determina si el postor debe ser Persona Natural o Jurídica. Enumera los "
-            "documentos de identidad y registros (RNP, etc.) obligatorios según el pliego."
+    # BOTÓN 1: Identificación de Perfil (Lógica de decisión)
+    if st.button("🔍 Identificar Perfil Legal (¿Natural o Jurídica?)"):
+        prompt_perfil = (
+            "Actúa como un experto en contrataciones del Estado Peruano. "
+            "Lee las bases adjuntas y responde: "
+            "1. ¿El postor puede ser Persona Natural o solo Persona Jurídica? "
+            "2. ¿Qué documentos de identidad o registros (RNP, Vigencia de Poder) son obligatorios? "
+            "3. ¿Existe algún beneficio para MYPEs en este proceso? "
+            "Responde de forma clara y estructurada."
         )
-        with st.spinner("Analizando requisitos..."):
-            response = model.generate_content([prompt, texto_total])
-            st.markdown(response.text)
+        with st.spinner("Analizando requisitos legales..."):
+            try:
+                response = model.generate_content([prompt_perfil, contexto_bases])
+                st.info("### Resultado del Análisis de Perfil")
+                st.markdown(response.text)
+            except Exception as e:
+                st.error(f"Error al consultar el modelo {MODEL_NAME}: {e}")
 
-    # Botón 2: Generar preguntas para Anexos
-    if st.button("Generar Cuestionario para Anexos"):
-        prompt = (
-            "Basado en las bases, genera una lista de preguntas breves que el usuario debe "
-            "responder para completar el Anexo 1 (Datos del Postor) y el Anexo de Experiencia. "
-            "Solo pide los datos que no están en las bases (ej: Nombre del representante, RUC, etc)."
+    # BOTÓN 2: Generar preguntas para Anexos
+    if st.button("📝 Generar Preguntas para Documentos"):
+        prompt_preguntas = (
+            "Basado en los requisitos de estas bases, genera una lista de preguntas "
+            "específicas que el usuario debe responder para completar el Anexo de Datos del Postor. "
+            "Solo pide información que NO esté en los documentos (como nombre del apoderado, RUC, cuenta CCI, etc.)."
         )
         with st.spinner("Creando cuestionario..."):
-            response = model.generate_content([prompt, texto_total])
-            st.info("Responde a lo siguiente para generar tus documentos:")
-            st.markdown(response.text)
+            try:
+                response = model.generate_content([prompt_preguntas, contexto_bases])
+                st.warning("### Datos necesarios para tus documentos:")
+                st.markdown(response.text)
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+else:
+    st.info("Por favor, sube uno o más archivos PDF para comenzar el análisis.")
+
+st.markdown("---")
+st.caption("Bot optimizado para el marco legal de Perú 2026 - Usando Gemini 2.0 Flash")
