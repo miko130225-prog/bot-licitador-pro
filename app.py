@@ -1,105 +1,104 @@
 import streamlit as st
 import google.generativeai as genai
 from PyPDF2 import PdfReader
-import time
 
-# --- CONFIGURACIÓN DEL MODELO GANADOR ---
-# gemini-2.5-flash-lite es el que tiene más cuota para PDFs pesados en 2026
-MODELO_ELEGIDO = 'gemini-2.5-flash-lite'
+# --- CONFIGURACIÓN DEL MOTOR DE IA ---
+# Usamos gemini-2.5-flash-lite por su alta cuota para procesar PDFs extensos
+MODELO_TÉCNICO = 'gemini-2.5-flash-lite'
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(MODELO_ELEGIDO)
+    model = genai.GenerativeModel(MODELO_TÉCNICO)
 except Exception as e:
-    st.error("Configura tu API Key en los Secrets de Streamlit.")
+    st.error("Error: Configura la API Key en los Secrets de Streamlit.")
 
-# --- CONFIGURACIÓN DE INTERFAZ (ESTILO TROPICAL) ---
-st.set_page_config(page_title="Licitador Pro 2026", page_icon="🌴", layout="wide")
+# --- CONFIGURACIÓN DE INTERFAZ ---
+st.set_page_config(page_title="Licitador Pro - Análisis de Bases", page_icon="⚖️", layout="wide")
 
+# Estilo profesional y limpio
 st.markdown("""
     <style>
-    .main { background-color: #FFF9E6; } /* Fondo amarillo cálido */
+    .main { background-color: #F8F9FA; }
     .stButton>button { 
-        background-color: #FF8F00; 
+        width: 100%;
+        background-color: #004A99; 
         color: white; 
-        border-radius: 20px; 
-        border: none;
-        font-weight: bold;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+        border-radius: 5px;
     }
-    .stButton>button:hover { background-color: #E65100; color: white; }
-    h1 { color: #2E7D32; font-family: 'Trebuchet MS'; } /* Verde palmera */
+    .stButton>button:hover { background-color: #003366; color: white; }
+    h1 { color: #1A1A1A; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🗿 Asistente de Gestión Exotikeh")
-st.caption("Analista experto en el Estado Peruano y Grandes Eventos")
+st.title("⚖️ Analista Experto en Licitaciones Públicas")
+st.subheader("Procesamiento de Bases de Requisitos - Estado Peruano")
 st.markdown("---")
 
-# --- FUNCIONES ---
-def extraer_texto(archivos):
-    texto_full = ""
-    for arc in archivos:
+# --- LÓGICA DE EXTRACCIÓN ---
+def extraer_contenido_pdf(archivos):
+    texto_total = ""
+    for archivo in archivos:
         try:
-            reader = PdfReader(arc)
-            for page in reader.pages:
-                texto_full += page.extract_text() + "\n"
+            lector = PdfReader(archivo)
+            for pagina in lector.pages:
+                texto_total += pagina.extract_text() + "\n"
         except Exception as e:
-            st.error(f"Error en {arc.name}: {e}")
-    return texto_full
+            st.error(f"Error al leer el archivo {archivo.name}: {e}")
+    return texto_total
 
-# --- COLUMNAS DE TRABAJO ---
-col_carga, col_analisis = st.columns([1, 2])
+# --- ESTRUCTURA DE LA APLICACIÓN ---
+col_archivo, col_resultados = st.columns([1, 2])
 
-with col_carga:
-    st.header("📂 Carga de Bases")
-    subidos = st.file_uploader("Sube los PDFs de la licitación", type="pdf", accept_multiple_files=True)
+with col_archivo:
+    st.header("📂 Documentación")
+    archivos_subidos = st.file_uploader("Cargar Bases Administrativas (PDF)", type="pdf", accept_multiple_files=True)
     
-    if subidos:
-        with st.spinner("🏝️ Navegando por el documento..."):
-            contexto = extraer_texto(subidos)
-        st.success(f"¡Listo! {len(subidos)} archivos leídos.")
-        
-        # Diagnóstico rápido de cuota (Opcional)
-        if st.checkbox("Verificar salud de conexión"):
-            st.write(f"Conectado a: **{MODELO_ELEGIDO}**")
+    if archivos_subidos:
+        with st.spinner("Extrayendo texto técnico..."):
+            contexto_legal = extraer_contenido_pdf(archivos_subidos)
+        st.success(f"Análisis listo: {len(archivos_subidos)} documento(s) cargado(s).")
 
-with col_analisis:
-    st.header("⚖️ Análisis Legal")
+with col_resultados:
+    st.header("📝 Análisis de Cumplimiento")
     
-    if subidos:
-        # BOTÓN 1: Perfil Legal
-        if st.button("🔍 Identificar Perfil (¿Natural o Jurídica?)"):
-            prompt = (
-                "Eres un experto en contrataciones del Estado Peruano. Analiza estas bases y dime: "
-                "1. ¿Se permite postular como Persona Natural? "
-                "2. Si es Persona Jurídica, ¿qué documentos específicos de SUNARP pide? "
-                "3. ¿Hay restricciones por el monto o garantías? "
-                "Responde con viñetas claras."
+    if archivos_subidos:
+        # BOTÓN 1: Identificación de Perfil Legal
+        if st.button("🔍 Determinar Perfil Legal (Persona Natural/Jurídica)"):
+            prompt_perfil = (
+                "Actúa como un experto en contrataciones del Estado Peruano. "
+                "Analiza exhaustivamente las bases adjuntas y responde con precisión técnica: "
+                "1. ¿El postor puede participar como Persona Natural o es exclusivo para Persona Jurídica? "
+                "2. Enumera los requisitos de capacidad legal (RNP, Vigencia de Poder, DNI). "
+                "3. Indica si existen impedimentos o restricciones específicas mencionadas en el pliego."
             )
-            with st.spinner("Consultando al oráculo..."):
+            with st.spinner("Procesando criterios de evaluación..."):
                 try:
-                    res = model.generate_content([prompt, contexto])
-                    st.info("### Perfil Requerido")
-                    st.markdown(res.text)
+                    respuesta = model.generate_content([prompt_perfil, contexto_legal])
+                    st.info("### Resultado del Análisis de Perfil")
+                    st.markdown(respuesta.text)
                 except Exception as e:
                     if "429" in str(e):
-                        st.error("⚠️ Cuota llena. Espera 20 segundos. El archivo es pesado.")
+                        st.error("⏳ Límite de cuota alcanzado. Por favor, reintente en 30 segundos debido a la extensión del PDF.")
                     else:
-                        st.error(f"Error: {e}")
+                        st.error(f"Error en la consulta: {e}")
 
-        # BOTÓN 2: Anexos
-        if st.button("📝 Generar Cuestionario para Anexos"):
-            prompt = "Basado en las bases, dime qué 5 datos específicos debo darte para rellenar el Anexo 1 hoy mismo."
-            try:
-                res = model.generate_content([prompt, contexto])
-                st.warning("### Datos faltantes:")
-                st.markdown(res.text)
-            except Exception as e:
-                st.error(f"Error: {e}")
+        # BOTÓN 2: Cuestionario de Datos para Anexos
+        if st.button("📋 Generar Check-list para Anexos"):
+            prompt_anexos = (
+                "Basado en las bases cargadas, genera un cuestionario con los datos específicos que el usuario "
+                "debe proporcionar para completar correctamente el Anexo de Datos del Postor y el Anexo de Experiencia. "
+                "No incluyas datos que ya figuren claramente en las bases."
+            )
+            with st.spinner("Identificando campos requeridos..."):
+                try:
+                    respuesta = model.generate_content([prompt_anexos, contexto_legal])
+                    st.warning("### Datos faltantes para el expediente:")
+                    st.markdown(respuesta.text)
+                except Exception as e:
+                    st.error(f"Error: {e}")
     else:
-        st.info("Sube un PDF para activar el análisis tropical.")
+        st.info("Cargue las bases en formato PDF para iniciar el análisis automático de requisitos.")
 
 st.markdown("---")
-st.caption("Ecosistema Exotikeh 2026 | Powered by Gemini 2.5 Flash-Lite")
+st.caption("Herramienta de soporte para licitaciones públicas | Modelo: Gemini 2.5 Flash-Lite")
