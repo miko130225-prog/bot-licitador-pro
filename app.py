@@ -1,13 +1,17 @@
 import streamlit as st
-import asyncio
-from putergenai import PuterClient  # El puente gratuito
+import google.generativeai as genai
 from PyPDF2 import PdfReader
 
-# Configuración de la interfaz
-st.set_page_config(page_title="Licitador Pro Gratis", page_icon="⚖️")
-st.title("🤖 Analista de Licitaciones (Modo Puter)")
+# Configuración de la API desde los Secrets de Streamlit
+api_key = st.secrets["GEMINI_API_KEY"]
+genai.configure(api_key=api_key)
 
-# Función para leer el PDF
+# Usamos Gemini 2.5 Flash por su eficiencia en bases legales
+model = genai.GenerativeModel('gemini-1.5-flash') # Puedes probar 'gemini-1.5-flash' o el que tengas habilitado
+
+st.set_page_config(page_title="Analista Licitaciones Perú", page_icon="⚖️")
+st.title("🤖 Asistente de Licitaciones Pro")
+
 def leer_pdf(file):
     reader = PdfReader(file)
     texto = ""
@@ -15,38 +19,35 @@ def leer_pdf(file):
         texto += page.extract_text()
     return texto
 
-# Lógica de la IA con Puter (Sin Tarjeta/API Key)
-async def consultar_ia(prompt_sistema, texto_bases):
-    async with PuterClient() as client:
-        # Puter nos da acceso a Gemini 2.5 Flash gratis
-        respuesta = await client.ai_chat(
-            prompt=f"{prompt_sistema}\n\nBASES ADJUNTAS:\n{texto_bases}",
-            options={"model": "gemini-2.5-flash"}
-        )
-        return respuesta
-
-# --- INTERFAZ DEL USUARIO ---
-archivos = st.file_uploader("Carga las bases en PDF", type="pdf", accept_multiple_files=True)
+# --- INTERFAZ ---
+archivos = st.file_uploader("Carga las bases (Juegos Bolivarianos, etc.)", type="pdf", accept_multiple_files=True)
 
 if archivos:
-    texto_completo = ""
+    texto_total = ""
     for f in archivos:
-        texto_completo += leer_pdf(f)
+        texto_total += leer_pdf(f)
     
-    st.success("Bases leídas. ¿Cómo quieres proceder?")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Identificar Perfil (Natural/Jurídica)"):
-            instruccion = "Analiza las bases y dime qué preguntas de decisión (Persona Natural o Jurídica) debo responder para armar el expediente."
-            with st.spinner("Analizando lógica legal..."):
-                res = asyncio.run(consultar_ia(instruccion, texto_completo))
-                st.markdown(res)
-                
-    with col2:
-        perfil = st.selectbox("Selecciona tu perfil una vez decidido:", ["Persona Natural", "Persona Jurídica"])
-        if st.button("Generar Lista de Documentos"):
-            instruccion = f"Soy {perfil}. Según las bases, dime exactamente qué documentos debo preparar hoy mismo."
-            with st.spinner("Extrayendo requisitos..."):
-                res = asyncio.run(consultar_ia(instruccion, texto_completo))
-                st.write(res)
+    st.success("Documentos procesados.")
+
+    # Botón 1: Análisis de Perfil
+    if st.button("Identificar Perfil Legal"):
+        prompt = (
+            "Eres un experto en contrataciones del estado peruano. Analiza estas bases y "
+            "determina si el postor debe ser Persona Natural o Jurídica. Enumera los "
+            "documentos de identidad y registros (RNP, etc.) obligatorios según el pliego."
+        )
+        with st.spinner("Analizando requisitos..."):
+            response = model.generate_content([prompt, texto_total])
+            st.markdown(response.text)
+
+    # Botón 2: Generar preguntas para Anexos
+    if st.button("Generar Cuestionario para Anexos"):
+        prompt = (
+            "Basado en las bases, genera una lista de preguntas breves que el usuario debe "
+            "responder para completar el Anexo 1 (Datos del Postor) y el Anexo de Experiencia. "
+            "Solo pide los datos que no están en las bases (ej: Nombre del representante, RUC, etc)."
+        )
+        with st.spinner("Creando cuestionario..."):
+            response = model.generate_content([prompt, texto_total])
+            st.info("Responde a lo siguiente para generar tus documentos:")
+            st.markdown(response.text)
