@@ -1,10 +1,11 @@
 import streamlit as st
 import google.generativeai as genai
-from PyPDF2 import PdfReader
 from docx import Document
+from docx.shared import Pt
 from io import BytesIO
+import re
 
-# --- CONFIGURACIÓN DE IA ---
+# --- CONFIGURACIÓN ---
 MODELO_TÉCNICO = 'gemini-2.5-flash-lite'
 
 try:
@@ -12,113 +13,114 @@ try:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(MODELO_TÉCNICO)
 except Exception as e:
-    st.error("Error: Configura la API Key en los Secrets de Streamlit.")
+    st.error("Error: Configura la API Key en los Secrets.")
 
-# --- FUNCIONES TÉCNICAS ---
-def leer_archivos(archivos):
+def leer_texto_completo(archivos):
     texto = ""
     for arc in archivos:
-        if arc.name.endswith('.pdf'):
-            reader = PdfReader(arc)
-            for page in reader.pages:
-                texto += page.extract_text() + "\n"
-        elif arc.name.endswith('.docx'):
-            doc = Document(arc)
-            for p in doc.paragraphs:
-                texto += p.text + "\n"
+        doc = Document(arc)
+        for p in doc.paragraphs:
+            texto += p.text + "\n"
+        for tabla in doc.tables:
+            for fila in tabla.rows:
+                for celda in fila.cells:
+                    texto += celda.text + " "
+                texto += "\n"
     return texto
 
-def generar_word_resultado(texto_contenido):
+def crear_word_profesional(contenido):
     doc = Document()
-    for linea in texto_contenido.split('\n'):
-        doc.add_paragraph(linea)
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = 'Arial'
+    font.size = Pt(10)
+    
+    for linea in contenido.split('\n'):
+        p = doc.add_paragraph(linea)
+    
     bio = BytesIO()
     doc.save(bio)
     return bio.getvalue()
 
-# --- ESTADO DE SESIÓN (PERSISTENCIA) ---
+st.set_page_config(page_title="Licitador Pro - Formatos Reales", layout="wide")
+
 if 'paso' not in st.session_state: st.session_state.paso = 1
 if 'anexo_actual' not in st.session_state: st.session_state.anexo_actual = 1
-if 'datos_por_anexo' not in st.session_state: st.session_state.datos_por_anexo = {}
-if 'modalidad' not in st.session_state: st.session_state.modalidad = None
 
-st.set_page_config(page_title="Licitador Automático Pro", layout="wide")
-st.title("⚖️ Generador de Expedientes de Licitación")
+st.title("⚖️ Generador de Anexos: Formato Oficial")
 
 # --- PASO 1: CARGA ---
 if st.session_state.paso == 1:
     st.header("1️⃣ Carga de Bases")
-    archivos = st.file_uploader("Sube las bases (PDF o Word)", type=["pdf", "docx"], accept_multiple_files=True)
-    if archivos and st.button("Iniciar Análisis de Bases"):
-        st.session_state.texto_bases = leer_archivos(archivos)
+    archivo = st.file_uploader("Sube el Word de las Bases Integradas", type=["docx"])
+    if archivo and st.button("Analizar Estructura de Tablas"):
+        st.session_state.texto_bases = leer_texto_completo([archivo])
         st.session_state.paso = 2
         st.rerun()
 
 # --- PASO 2: MODALIDAD ---
 elif st.session_state.paso == 2:
-    st.header("2️⃣ Definición de Postulación")
-    eleccion = st.radio("¿Cómo postularás?", ["Seleccione...", "Empresa Única", "Consorcio"])
-    if eleccion != "Seleccione..." and st.button("Confirmar Modalidad"):
-        st.session_state.modalidad = eleccion
+    st.header("2️⃣ Modalidad de Postulación")
+    modalidad = st.radio("Seleccione escenario:", ["Individual", "Consorcio"])
+    if st.button("Confirmar y Buscar Campos de Tabla"):
+        st.session_state.modalidad = modalidad
         st.session_state.paso = 3
         st.rerun()
 
-# --- PASO 3: ENTREVISTA Y GENERACIÓN POR ANEXO ---
+# --- PASO 3: ENTREVISTA DETALLADA ---
 elif st.session_state.paso == 3:
-    num_anexo = st.session_state.anexo_actual
-    st.header(f"3️⃣ Completando ANEXO N° {num_anexo}")
+    n = st.session_state.anexo_actual
+    st.header(f"3️⃣ Datos para el ANEXO N° {n}")
     
-    # 1. El bot identifica qué versión del anexo corresponde y qué datos pide
-    if f'campos_anexo_{num_anexo}' not in st.session_state:
-        with st.spinner(f"Analizando requisitos del Anexo {num_anexo}..."):
-            prompt_campos = (
-                f"Analiza las bases. El postor es {st.session_state.modalidad}. "
-                f"Busca el formato del ANEXO N° {num_anexo}. "
-                f"Lista todos los datos que el usuario debe llenar para este anexo específicamente. "
-                "Responde solo la lista de campos separada por comas."
+    if f'campos_n{n}' not in st.session_state:
+        with st.spinner("Escaneando tablas y espacios en blanco..."):
+            prompt = (
+                f"Analiza el ANEXO {n} para {st.session_state.modalidad} en estas bases. "
+                "Identifica TODOS los campos, incluyendo los de la tabla (RUC, Domicilio, MYPE, etc.) "
+                "y los espacios del cuerpo del texto. Responde solo los nombres separados por comas."
             )
-            res = model.generate_content([prompt_campos, st.session_state.texto_bases])
-            st.session_state[f'campos_anexo_{num_anexo}'] = res.text.split(',')
+            res = model.generate_content([prompt, st.session_state.texto_bases])
+            st.session_state[f'campos_n{n}'] = res.text.split(',')
 
-    # 2. Formulario para el Anexo Actual
-    with st.form(f"form_anexo_{num_anexo}"):
-        st.subheader(f"Datos para el Anexo {num_anexo}")
+    with st.form(f"f_{n}"):
         respuestas = {}
-        for campo in st.session_state[f'campos_anexo_{num_anexo}']:
-            if campo.strip():
-                respuestas[campo.strip()] = st.text_input(campo.strip())
+        # Dividimos en columnas para que no sea una lista infinita
+        cols = st.columns(2)
+        for i, campo in enumerate(st.session_state[f'campos_n{n}']):
+            c = campo.strip()
+            if c:
+                with cols[i % 2]:
+                    # Manejo especial para MYPE
+                    if "MYPE" in c.upper():
+                        respuestas[c] = st.selectbox(c, ["NO", "SÍ"])
+                    else:
+                        respuestas[c] = st.text_input(c)
         
-        if st.form_submit_button(f"Generar Word del Anexo {num_anexo}"):
-            # 3. Generar el texto legal con los datos insertados
-            datos_str = "\n".join([f"{k}: {v}" for k, v in respuestas.items()])
-            prompt_llenado = (
-                f"Redacta el ANEXO N° {num_anexo} completo para {st.session_state.modalidad}. "
-                f"Usa estos datos: {datos_str}. "
-                f"Sigue el formato exacto de las bases: {st.session_state.texto_bases}. "
-                "NO uses corchetes, integra la información directamente en el texto."
-            )
-            st.session_state[f'resultado_anexo_{num_anexo}'] = model.generate_content(prompt_llenado).text
-            st.rerun()
+        if st.form_submit_button("Generar Anexo con Formato"):
+            with st.spinner("Construyendo documento..."):
+                datos_ctx = "\n".join([f"{k}: {v}" for k, v in respuestas.items()])
+                prompt_final = (
+                    f"Redacta el ANEXO {n} para {st.session_state.modalidad}. "
+                    f"DATOS DEL USUARIO: {datos_ctx}. "
+                    f"ESTRUCTURA ORIGINAL: {st.session_state.texto_bases}. "
+                    "INSTRUCCIONES CRÍTICAS: "
+                    "1. Mantén la TABLA DE DATOS al inicio si existe en las bases. "
+                    "2. Si es MYPE SI, marca con una 'X' el paréntesis (X). "
+                    "3. Usa un lenguaje formal y legal. No inventes datos, usa solo los provistos."
+                )
+                st.session_state[f"res_n{n}"] = model.generate_content(prompt_final).text
+                st.rerun()
 
-    # 4. Mostrar resultado y permitir descarga
-    if f'resultado_anexo_{num_anexo}' in st.session_state:
-        st.success(f"¡Anexo {num_anexo} listo!")
-        st.text_area("Vista Previa:", st.session_state[f'resultado_anexo_{num_anexo}'], height=300)
+    if f"res_n{n}" in st.session_state:
+        st.info("### Previsualización del Documento")
+        st.text(st.session_state[f"res_n{n}"])
         
-        word_file = generar_word_resultado(st.session_state[f'resultado_anexo_{num_anexo}'])
-        st.download_button(
-            label=f"⬇️ Descargar Anexo {num_anexo} (.docx)",
-            data=word_file,
-            file_name=f"Anexo_{num_anexo}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
-        
-        st.markdown("---")
-        if st.button(f"Continuar al Anexo N° {num_anexo + 1} ➡️"):
-            st.session_state.anexo_actual += 1
-            # Limpiamos para el siguiente anexo
-            st.rerun()
-
-    if st.button("⬅️ Cambiar Modalidad"):
-        st.session_state.paso = 2
-        st.rerun()
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            st.download_button("⬇️ Descargar Anexo en Word", 
+                             data=crear_word_profesional(st.session_state[f"res_n{n}"]), 
+                             file_name=f"Anexo_{n}.docx")
+        with btn_col2:
+            if st.button("Siguiente Anexo ➡️"):
+                st.session_state.anexo_actual += 1
+                st.rerun()
