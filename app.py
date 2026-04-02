@@ -1,6 +1,8 @@
 import streamlit as st
 import google.generativeai as genai
 from PyPDF2 import PdfReader
+from docx import Document
+import io
 
 # --- CONFIGURACIÓN DE IA ---
 MODELO_TÉCNICO = 'gemini-2.5-flash-lite'
@@ -10,117 +12,98 @@ try:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(MODELO_TÉCNICO)
 except Exception as e:
-    st.error("Error: Configura la API Key en los Secrets de Streamlit.")
+    st.error("Error: Configura la API Key en los Secrets.")
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Gestor de Licitaciones Pro", page_icon="⚖️", layout="wide")
+# --- FUNCIONES DE LECTURA ---
+def leer_documentos(archivos):
+    texto_total = ""
+    for archivo in archivos:
+        if archivo.name.endswith('.pdf'):
+            reader = PdfReader(archivo)
+            for page in reader.pages:
+                texto_total += page.extract_text() + "\n"
+        elif archivo.name.endswith('.docx'):
+            doc = Document(archivo)
+            for para in doc.paragraphs:
+                texto_total += para.text + "\n"
+    return texto_total
 
-# Inicialización de estados para el flujo
-if 'paso' not in st.session_state:
-    st.session_state.paso = 1  # 1: Carga, 2: Perfil, 3: Generación
-if 'texto_bases' not in st.session_state:
-    st.session_state.texto_bases = ""
-if 'perfil' not in st.session_state:
-    st.session_state.perfil = {}
+# --- INTERFAZ ---
+st.set_page_config(page_title="Gestor de Licitaciones Pro", layout="wide")
 
-def leer_pdf(archivos):
-    texto = ""
-    for arc in archivos:
-        reader = PdfReader(arc)
-        for page in reader.pages:
-            texto += page.extract_text() + "\n"
-    return texto
+if 'paso' not in st.session_state: st.session_state.paso = 1
+if 'texto_bases' not in st.session_state: st.session_state.texto_bases = ""
+if 'datos_usuario' not in st.session_state: st.session_state.datos_usuario = {}
 
-# --- DISEÑO ---
-st.title("⚖️ Asistente Inteligente de Postulación")
+st.title("⚖️ Generador Automático de Anexos")
 st.markdown("---")
 
-# --- PASO 1: CARGA Y PROCESAMIENTO ---
+# PASO 1: CARGA MULTIFORMATO
 if st.session_state.paso == 1:
-    st.header("1️⃣ Carga de Documentación")
-    archivos = st.file_uploader("Sube las bases de la licitación (PDF)", type="pdf", accept_multiple_files=True)
+    st.header("1️⃣ Carga de Bases Integradas")
+    st.info("Puedes subir el PDF de la convocatoria o el Word con los formatos de anexos.")
+    archivos = st.file_uploader("Sube tus archivos (PDF o Word)", type=["pdf", "docx"], accept_multiple_files=True)
     
     if archivos:
-        with st.spinner("Procesando archivos técnicos..."):
-            st.session_state.texto_bases = leer_pdf(archivos)
-            st.session_state.paso = 2
-            st.rerun()
+        if st.button("Procesar y Extraer Formatos"):
+            with st.spinner("Analizando estructura de los anexos..."):
+                st.session_state.texto_bases = leer_documentos(archivos)
+                st.session_state.paso = 2
+                st.rerun()
 
-# --- PASO 2: DEFINICIÓN DEL POSTOR ---
+# PASO 2: ENTREVISTA DINÁMICA
 elif st.session_state.paso == 2:
-    st.header("2️⃣ Configuración del Postor")
-    st.info("Documentos procesados con éxito. Ahora, define tu perfil para ajustar la generación de documentos.")
+    st.header("2️⃣ Información Requerida para los Anexos")
+    st.markdown("El bot ha detectado los campos necesarios en las bases. Por favor, completa los datos:")
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        tipo_postor = st.selectbox(
-            "¿Cómo te presentarás a este proceso?",
-            ["Selecciona una opción", "Persona Jurídica (Empresa Nacional)", "Persona Jurídica (Extranjera)", "Persona Natural (Consultor/Individual)", "Consorcio"]
-        )
-        
-        es_mype = st.radio("¿Eres una MYPE inscrita en el REMYPE?", ["No", "Sí"])
-    
-    with col2:
-        st.markdown("**Resumen detectado en las bases:**")
-        # Pequeño resumen automático para ayudar al usuario a decidir
-        if st.button("Verificar compatibilidad rápida"):
-            with st.spinner("Analizando restricciones de las bases..."):
-                res = model.generate_content([
-                    "Analiza brevemente si estas bases permiten Personas Naturales y Consorcios.", 
-                    st.session_state.texto_bases
-                ])
-                st.write(res.text)
+    # Pedimos a la IA que identifique qué datos faltan según las bases
+    if 'preguntas' not in st.session_state:
+        with st.spinner("Identificando campos obligatorios en los anexos..."):
+            prompt_campos = (
+                "Analiza los anexos al final de estas bases. Genera una lista de campos de información "
+                "que el postor debe proveer (ej: RUC, DNI del representante, Dirección, Correo, etc.). "
+                "Devuélvelos como una lista simple separada por comas."
+            )
+            res = model.generate_content([prompt_campos, st.session_state.texto_bases])
+            st.session_state.preguntas = res.text.split(',')
 
-    if tipo_postor != "Selecciona una opción":
-        if st.button("Confirmar Perfil y Continuar"):
-            st.session_state.perfil = {"tipo": tipo_postor, "mype": es_mype}
+    # Formulario dinámico
+    with st.form("form_datos"):
+        for campo in st.session_state.preguntas:
+            campo_limpio = campo.strip().replace("*", "")
+            if campo_limpio:
+                st.session_state.datos_usuario[campo_limpio] = st.text_input(f"Ingrese: {campo_limpio}")
+        
+        enviar = st.form_submit_button("Confirmar Datos y Generar Anexos")
+        if enviar:
             st.session_state.paso = 3
             st.rerun()
-    
-    if st.button("⬅️ Volver a cargar archivos"):
+
+    if st.button("⬅️ Volver a cargar"):
         st.session_state.paso = 1
         st.rerun()
 
-# --- PASO 3: GENERACIÓN DE DOCUMENTOS ---
+# PASO 3: GENERACIÓN FINAL
 elif st.session_state.paso == 3:
-    st.header(f"3️⃣ Panel de Generación: {st.session_state.perfil['tipo']}")
+    st.header("3️⃣ Anexos Generados")
+    st.success("Tus datos han sido integrados en los formatos de las bases.")
     
-    st.success(f"Configuración activa: **{st.session_state.perfil['tipo']}** | MYPE: **{st.session_state.perfil['mype']}**")
-    
-    tab1, tab2, tab3 = st.tabs(["📋 Requisitos Específicos", "✍️ Borrador de Anexos", "✅ Check-list Final"])
-    
-    with tab1:
-        st.subheader("Documentos exigidos para tu perfil")
-        if st.button("Generar Lista de Documentos"):
-            prompt = f"Basado en las bases, lista solo los documentos que debe presentar una {st.session_state.perfil['tipo']} (MYPE: {st.session_state.perfil['mype']})."
-            with st.spinner("Filtrando pliego..."):
-                res = model.generate_content([prompt, st.session_state.texto_bases])
-                st.markdown(res.text)
+    # Botón para redactar el Anexo 1 con los datos reales
+    if st.button("📄 Redactar Anexo 1 Completo"):
+        datos_str = "\n".join([f"{k}: {v}" for k, v in st.session_state.datos_usuario.items()])
+        prompt_final = (
+            f"Usando estos datos del usuario:\n{datos_str}\n\n"
+            f"Y basándote en el formato de Anexo 1 de estas bases:\n{st.session_state.texto_bases}\n\n"
+            "Redacta el Anexo 1 completo, reemplazando todos los campos vacíos con la información provista. "
+            "Mantén el rigor legal del Estado Peruano."
+        )
+        with st.spinner("Redactando documento final..."):
+            res = model.generate_content([prompt_final, st.session_state.texto_bases])
+            st.text_area("Copia este texto en tu Word de postulación:", res.text, height=400)
 
-    with tab2:
-        st.subheader("Borradores de Anexos")
-        opcion_anexo = st.selectbox("¿Qué anexo deseas redactar?", ["Anexo 1 - Datos del Postor", "Anexo 2 - Declaración Jurada", "Anexo de Experiencia"])
-        
-        if st.button(f"Redactar {opcion_anexo}"):
-            prompt = (
-                f"Redacta el {opcion_anexo} siguiendo el formato de las bases para una {st.session_state.perfil['tipo']}. "
-                "Usa [CORCHETES] para los datos que el usuario debe completar manualmente."
-            )
-            with st.spinner("Generando borrador legal..."):
-                res = model.generate_content([prompt, st.session_state.texto_bases])
-                st.code(res.text, language="text")
-
-    with tab3:
-        st.subheader("Preguntas de Control")
-        if st.button("¿Qué me falta responder?"):
-            prompt = "Haz una lista de 5 preguntas clave que debo responderme antes de cerrar mi oferta para evitar ser descalificado según estas bases."
-            res = model.generate_content([prompt, st.session_state.texto_bases])
-            st.markdown(res.text)
-
-    if st.button("⬅️ Cambiar Perfil / Reiniciar"):
+    if st.button("⬅️ Editar datos o perfil"):
         st.session_state.paso = 2
         st.rerun()
 
 st.markdown("---")
-st.caption("Flujo de trabajo estructurado para Licitaciones Públicas | Modelo: " + MODELO_TÉCNICO)
+st.caption("Soporte para PDF/Word | Análisis de Bases Integradas 2026")
