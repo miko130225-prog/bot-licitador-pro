@@ -38,8 +38,8 @@ def exportar_word(texto):
     return buffer.getvalue()
 
 # --- INTERFAZ ---
-st.set_page_config(page_title="Licitador Pro - Flujo Estricto", layout="wide")
-st.title("⚖️ Asistente de Licitaciones: Paso a Paso")
+st.set_page_config(page_title="Licitador Pro - GTN", layout="wide")
+st.title("⚖️ Asistente de Licitaciones: Llenado Contextual")
 
 # Inicialización de estados
 if 'paso' not in st.session_state: st.session_state.paso = 1
@@ -49,8 +49,8 @@ if 'feedback_actual' not in st.session_state: st.session_state.feedback_actual =
 
 # --- PASO 1: CARGA ---
 if st.session_state.paso == 1:
-    archivo = st.file_uploader("Sube las Bases Integradas para iniciar (.docx)", type="docx")
-    if archivo and st.button("Iniciar Análisis de Anexos"):
+    archivo = st.file_uploader("Sube las Bases Integradas (.docx)", type="docx")
+    if archivo and st.button("Iniciar Proceso de Anexos"):
         with st.spinner("Procesando documento..."):
             st.session_state.raw_text = obtener_texto_completo(archivo)
             st.session_state.paso = 2
@@ -59,18 +59,17 @@ if st.session_state.paso == 1:
 # --- PASO 2: IDENTIFICACIÓN OBLIGATORIA DE VARIANTES ---
 elif st.session_state.paso == 2:
     num = st.session_state.anexo_n
-    st.header(f"Fase de Identificación: ANEXO N° {num}")
+    st.header(f"Identificación: ANEXO N° {num}")
     
-    with st.spinner(f"Detectando modelos para el Anexo {num}..."):
+    with st.spinner(f"Buscando variantes para el Anexo {num}..."):
         prompt_v = (
             f"Busca en las bases todas las versiones del 'ANEXO N° {num}'. "
             f"Instrucción del usuario: {st.session_state.feedback_actual}. "
-            "Si hay más de una (ej. Persona Jurídica, Consorcio), lístalas separadas por ';'. "
+            "Si hay más de una (ej. Individual, Consorcio, Jurídica), lístalas separadas por ';'. "
             "Si es única, responde estrictamente: UNICA."
         )
         res_v = model.generate_content([prompt_v, st.session_state.raw_text]).text
     
-    # Solo salta automáticamente si es ÚNICA y NO hay corrección pendiente
     if "UNICA" in res_v.upper() and not st.session_state.feedback_actual:
         st.session_state.version_elegida = f"ANEXO N° {num}"
         st.session_state.paso = 3
@@ -80,79 +79,96 @@ elif st.session_state.paso == 2:
         
         col_sel, col_corr = st.columns([2, 1])
         with col_sel:
-            st.markdown("##### Seleccione la variante que desea llenar:")
-            seleccion = st.radio("Opciones encontradas:", opciones, key=f"radio_n{num}")
-            if st.button("Confirmar Selección de Variante"):
+            st.markdown("##### Seleccione el modelo correcto:")
+            seleccion = st.radio("Modelos detectados:", opciones, key=f"radio_n{num}")
+            if st.button("Confirmar Modelo Seleccionado"):
                 st.session_state.version_elegida = seleccion
                 st.session_state.paso = 3
                 st.rerun()
         
         with col_corr:
-            st.info("¿Ajuste necesario?")
-            txt_fb = st.text_area("Explique la observación (ej: 'Solo existen 2 modelos de Anexo 1'):", key=f"fb_n{num}")
-            if st.button("Registrar y Reanalizar"):
+            st.info("Ajuste de búsqueda")
+            txt_fb = st.text_area("Explique la observación:", key=f"fb_n{num}", placeholder="Ej: Ignora el modelo de consorcio")
+            if st.button("Registrar y Reintentar"):
                 st.session_state.feedback_actual = txt_fb
                 st.rerun()
 
-# --- PASO 3: ENTREVISTA CONTEXTUAL ---
+# --- PASO 3: FORMULARIO CONTEXTUAL (RELLENAR PÁRRAFO) ---
 elif st.session_state.paso == 3:
     num = st.session_state.anexo_n
-    st.header(f"Completando: {st.session_state.version_elegida}")
+    st.header(f"Llenado Contextual: {st.session_state.version_elegida}")
 
     if 'campos_contexto' not in st.session_state:
-        with st.spinner("Analizando texto para la entrevista..."):
+        with st.spinner("Preparando el párrafo de redacción..."):
             prompt_c = (
-                f"Extrae el texto completo de la variante '{st.session_state.version_elegida}'. "
-                "Identifica las etiquetas a llenar como [CONSIGNAR...], [DATOS...], etc. "
-                "Devuelve el fragmento de texto para referencia y la lista de etiquetas."
+                f"Extrae el texto exacto del '{st.session_state.version_elegida}'. "
+                "Identifica las etiquetas [CONSIGNAR...], [DATOS...], etc. "
+                "No resumas, necesito el párrafo legal completo."
             )
             res_c = model.generate_content([prompt_c, st.session_state.raw_text]).text
             
-            # Buscamos corchetes con contenido descriptivo (ej. [CONSIGNAR CIUDAD])
-            # Ignoramos basura como [.........]
+            # Extraemos etiquetas descriptivas, ignoramos puntos [......]
             encontrados = re.findall(r'\[[^\]]+\]', res_c)
             st.session_state.campos_contexto = [c for c in encontrados if any(char.isalpha() for char in c)]
             st.session_state.texto_referencia = res_c
 
     st.markdown("---")
-    st.info("Complete la información solicitada para este formato:")
-    
-    with st.form(key=f"form_ctx_{num}"):
+    st.warning("Complete la información directamente sobre la estructura del párrafo:")
+
+    with st.form(key=f"form_contextual_{num}"):
         respuestas = {}
-        # Mostramos los campos de forma organizada
-        c1, c2 = st.columns(2)
-        for i, campo in enumerate(st.session_state.campos_contexto):
-            col_target = c1 if i % 2 == 0 else c2
-            val_prev = st.session_state.memoria_datos.get(campo, "")
-            with col_target:
-                respuestas[campo] = st.text_input(f"Dato para {campo}:", value=val_prev, key=f"inp_{num}_{i}")
         
-        if st.form_submit_button("Finalizar y Generar Documento"):
+        # Mostramos los campos integrados en la estructura
+        st.markdown("#### Estructura del Documento")
+        
+        # Iteramos sobre los campos para crear los inputs
+        for i, campo in enumerate(st.session_state.campos_contexto):
+            val_prev = st.session_state.memoria_datos.get(campo, "")
+            # Usamos label_visibility="visible" pero con el texto del campo para que el usuario sepa qué poner
+            respuestas[campo] = st.text_input(
+                f"Complete el espacio para: {campo}", 
+                value=val_prev, 
+                key=f"inp_{num}_{i}",
+                placeholder=f"Escriba aquí la información para {campo}..."
+            )
+            st.markdown("---") # Separador para simular el avance del párrafo
+
+        if st.form_submit_button("✅ Finalizar y Generar Documento"):
             st.session_state.memoria_datos.update(respuestas)
-            with st.spinner("Redactando anexo final..."):
+            with st.spinner("Generando archivo final..."):
+                # Reemplazo de etiquetas por valores
+                texto_final = st.session_state.texto_referencia
+                for tag, valor in respuestas.items():
+                    if valor:
+                        texto_final = texto_final.replace(tag, valor)
+                
                 prompt_f = (
-                    f"Redacta el {st.session_state.version_elegida} completo. "
-                    f"Usa estos datos: {respuestas}. "
-                    f"Asegúrate de que el formato sea idéntico a: {st.session_state.texto_referencia}. "
-                    "Elimina todos los corchetes y entrega el texto final limpio."
+                    f"Toma este texto con los datos insertados: {texto_final}. "
+                    "Reconstrúyelo respetando el formato de las bases originales. "
+                    "Elimina corchetes sobrantes y asegúrate de que sea un documento formal listo."
                 )
                 st.session_state.docx_final = model.generate_content(prompt_f).text
                 st.session_state.paso = 4
                 st.rerun()
 
-# --- PASO 4: DESCARGA Y SIGUIENTE ---
+# --- PASO 4: DESCARGA Y CONTINUACIÓN ---
 elif st.session_state.paso == 4:
-    st.success(f"Anexo {st.session_state.anexo_n} generado con éxito.")
-    st.text_area("Vista previa:", st.session_state.docx_final, height=400)
+    st.success(f"Anexo {st.session_state.anexo_n} redactado correctamente.")
+    st.text_area("Vista previa del anexo:", st.session_state.docx_final, height=400)
     
     doc_bin = exportar_word(st.session_state.docx_final)
-    st.download_button("⬇️ Descargar Anexo en Word", data=doc_bin, file_name=f"Anexo_{st.session_state.anexo_n}.docx")
+    st.download_button(
+        label="⬇️ Descargar Anexo en formato Word", 
+        data=doc_bin, 
+        file_name=f"Anexo_{st.session_state.anexo_n}_Final.docx"
+    )
     
     st.markdown("---")
-    if st.button("Continuar al siguiente número de Anexo (Anexo N° " + str(st.session_state.anexo_n + 1) + ") ➡️"):
-        st.session_state.anexo_n += 1
+    proximo = st.session_state.anexo_n + 1
+    if st.button(f"Pasar al Anexo N° {proximo} ➡️"):
+        st.session_state.anexo_n = proximo
         st.session_state.feedback_actual = ""
-        # Limpiamos estados específicos del anexo terminado
+        # Limpieza profunda de temporales
         for k in ['campos_contexto', 'texto_referencia', 'version_elegida', 'docx_final']:
             if k in st.session_state: del st.session_state[k]
         st.session_state.paso = 2
