@@ -37,7 +37,7 @@ def exportar_word(texto):
     return buffer.getvalue()
 
 # --- INTERFAZ ---
-st.set_page_config(page_title="Licitador Pro: Flujo Secuencial", layout="wide")
+st.set_page_config(page_title="Licitador Pro", layout="wide")
 st.title("⚖️ Asistente de Licitaciones: Llenado de Anexos")
 
 if 'paso' not in st.session_state: st.session_state.paso = 1
@@ -54,7 +54,7 @@ if st.session_state.paso == 1:
             st.session_state.paso = 2
             st.rerun()
 
-# PASO 2: IDENTIFICAR VARIANTES DEL ANEXO ACTUAL
+# PASO 2: IDENTIFICAR VARIANTES (TU AJUSTE INTEGRADO)
 elif st.session_state.paso == 2:
     num = st.session_state.anexo_n
     st.subheader(f"Anexo Actual: N° {num}")
@@ -83,33 +83,35 @@ elif st.session_state.paso == 2:
                 st.session_state.paso = 3
                 st.rerun()
         with col_corr:
-            st.info("¿El bot detectó mal las variantes?")
-            txt_fb = st.text_area("Explica el error (ej: 'Solo hay 2 modelos de Anexo 1, el tercero no existe'):")
-            if st.button("Corregir Detección"):
+            st.info("¿Existe algún ajuste complementario que se quiera realizar?")
+            txt_fb = st.text_area("Explica la observación (ej: 'Quiero que el anexo se genere 2 veces'):")
+            if st.button("Registrar Observación"):
                 st.session_state.feedback_actual = txt_fb
                 st.rerun()
 
-# PASO 3: ENTREVISTA DE CAMPOS (SOLO DEL MODELO ELEGIDO)
+# PASO 3: ENTREVISTA DE CAMPOS (CORREGIDO PARA EVITAR BASURA)
 elif st.session_state.paso == 3:
     st.subheader(f"Completando: {st.session_state.version_elegida}")
     num = st.session_state.anexo_n
 
     if 'campos_modelo' not in st.session_state:
-        with st.spinner("Extrayendo solo los campos de esta variante..."):
+        with st.spinner("Extrayendo campos válidos..."):
             prompt_c = (
                 f"Dentro de las bases, ubica la sección del '{st.session_state.version_elegida}'. "
-                "Identifica TODOS los campos vacíos, tablas con datos faltantes, corchetes [...] y líneas de puntos .... "
-                "Lista los nombres de estos campos separados por comas. No expliques nada."
+                "Identifica los campos vacíos que el usuario debe llenar, basándote en corchetes [ ] que contengan texto explicativo (ej. [CONSIGNAR DATOS]). "
+                "REGLA CRÍTICA: Ignora y NO listes campos que solo contengan puntos o espacios como [.......], [………] o [ ]. "
+                "Solo devuelve los nombres descriptivos de los campos separados por comas."
             )
             res_c = model.generate_content([prompt_c, st.session_state.raw_text]).text
-            st.session_state.campos_modelo = [c.strip() for c in res_c.split(',') if c.strip()]
+            # Filtro adicional en Python por si la IA ignora la instrucción
+            raw_list = res_c.split(',')
+            st.session_state.campos_modelo = [c.strip() for c in raw_list if c.strip() and not all(char in " ._…[]" for char in c)]
 
     with st.form(key=f"form_anexo_{num}"):
         respuestas = {}
         c1, c2 = st.columns(2)
         for i, campo in enumerate(st.session_state.campos_modelo):
             target = c1 if i % 2 == 0 else c2
-            # Autocompletado si el dato ya existe en la memoria (ej. RUC)
             val_prev = st.session_state.memoria_datos.get(campo, "")
             with target:
                 respuestas[campo] = st.text_input(campo, value=val_prev, key=f"inp_{num}_{i}")
@@ -121,7 +123,7 @@ elif st.session_state.paso == 3:
                     f"Redacta el {st.session_state.version_elegida} completo. "
                     f"Usa estos datos: {respuestas}. "
                     f"Copia fielmente el formato (tablas y texto) de: {st.session_state.raw_text}. "
-                    "Limpia corchetes y líneas, entrega el anexo listo para firmar."
+                    "Asegúrate de reemplazar todos los corchetes por los datos proporcionados. Entrega el texto limpio."
                 )
                 st.session_state.docx_final = model.generate_content(prompt_f).text
                 st.session_state.paso = 4
@@ -138,7 +140,6 @@ elif st.session_state.paso == 4:
     
     st.markdown("---")
     if st.button("Continuar al siguiente número de Anexo ➡️"):
-        # Limpieza de estados del anexo anterior
         st.session_state.anexo_n += 1
         st.session_state.feedback_actual = ""
         for k in ['campos_modelo', 'version_elegida', 'docx_final']:
