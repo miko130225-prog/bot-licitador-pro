@@ -6,25 +6,25 @@ from io import BytesIO
 import re
 
 # --- CONFIGURACIÓN DE IA ---
-MODELO = 'gemini-2.5-flash-lite'
+MODELO = 'gemini-2.0-flash' # O gemini-1.5-flash
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(MODELO)
 except Exception as e:
-    st.error("Falta la API Key en st.secrets (GEMINI_API_KEY).")
+    st.error("Error: Configura GEMINI_API_KEY en st.secrets")
 
-# --- FUNCIONES TÉCNICAS ---
-def obtener_texto_completo(archivo):
+# --- FUNCIONES DE PROCESAMIENTO ---
+def extraer_anexos_estrictos(archivo):
     doc = Document(archivo)
-    full_text = []
+    texto_completo = []
     for p in doc.paragraphs:
-        if p.text.strip(): full_text.append(p.text)
+        if p.text.strip(): texto_completo.append(p.text)
     for t in doc.tables:
         for r in t.rows:
-            full_text.append(" | ".join(c.text.strip() for c in r.cells))
-    return "\n".join(full_text)
+            texto_completo.append(" | ".join(c.text.strip() for c in r.cells))
+    return "\n".join(texto_completo)
 
 def exportar_word(texto):
     doc = Document()
@@ -37,115 +37,123 @@ def exportar_word(texto):
     return buffer.getvalue()
 
 # --- INTERFAZ ---
-st.set_page_config(page_title="Licitador Pro - Validación Estricta", layout="wide")
-st.title("⚖️ Asistente de Licitaciones")
+st.set_page_config(page_title="Bot Licitador Pro", layout="wide")
+st.title("⚖️ Asistente Licitador Pro: GTN")
 
-# Inicialización de estados
 if 'paso' not in st.session_state: st.session_state.paso = 1
-if 'anexo_n' not in st.session_state: st.session_state.anexo_n = 1
-if 'intentos_ajuste' not in st.session_state: st.session_state.intentos_ajuste = 0
-if 'memoria_datos' not in st.session_state: st.session_state.memoria_datos = {}
-if 'feedback_actual' not in st.session_state: st.session_state.feedback_actual = ""
+if 'anexo_actual_idx' not in st.session_state: st.session_state.anexo_actual_idx = 0
+if 'lista_anexos' not in st.session_state: st.session_state.lista_anexos = []
+if 'datos_registrados' not in st.session_state: st.session_state.datos_registrados = {}
 
-# --- PASO 1: CARGA ---
+# PASO 1: CARGA Y ESCANEO INICIAL
 if st.session_state.paso == 1:
-    archivo = st.file_uploader("Sube las Bases Integradas (.docx)", type="docx")
-    if archivo and st.button("Analizar Documento"):
-        with st.spinner("Leyendo archivo..."):
-            st.session_state.raw_text = obtener_texto_completo(archivo)
+    archivo = st.file_uploader("Cargar Bases Integradas (.docx)", type="docx")
+    if archivo and st.button("Analizar Estructura de Anexos"):
+        with st.spinner("Escaneando formatos en las bases..."):
+            texto = extraer_anexos_estrictos(archivo)
+            st.session_state.raw_text = texto
+            
+            # Identificación de todos los bloques que empiezan con ANEXO N°
+            prompt_init = (
+                "Analiza el texto y extrae una lista de todos los encabezados de anexos encontrados. "
+                "Si un anexo tiene variantes (ej: Persona Jurídica / Persona Natural), lístalas como items separados. "
+                "Responde únicamente con los nombres de los anexos separados por '|'."
+            )
+            res = model.generate_content([prompt_init, texto]).text
+            st.session_state.lista_anexos = [a.strip() for a in res.split('|') if len(a.strip()) > 5]
             st.session_state.paso = 2
             st.rerun()
 
-# --- PASO 2: IDENTIFICACIÓN Y CONFIRMACIÓN OBLIGATORIA ---
+# PASO 2: IDENTIFICACIÓN DE VARIANTE (OBLIGATORIO)
 elif st.session_state.paso == 2:
-    num = st.session_state.anexo_n
-    st.header(f"Validación de ANEXO N° {num}")
-    
-    # Control de errores: Bloqueo tras 2 intentos fallidos de ajuste
-    if st.session_state.intentos_ajuste >= 2:
-        st.error("⚠️ Se han detectado dificultades técnicas persistentes para identificar las variantes de este anexo.")
-        st.info("Por favor, **comuníquese con soporte técnico** para procesar este anexo de forma manual.")
-        if st.button("Reiniciar desde el inicio"):
-            for key in st.session_state.keys(): del st.session_state[key]
-            st.rerun()
-    else:
-        with st.spinner(f"Buscando formatos para el Anexo {num}..."):
-            prompt_v = (
-                f"Busca en las bases todas las versiones del 'ANEXO N° {num}'. "
-                f"Ajuste previo del usuario: {st.session_state.feedback_actual}. "
-                "Para cada variante, extrae el nombre completo (ej: ANEXO N° 1 - Persona Jurídica). "
-                "Responde listando las variantes separadas por ';'. "
-                "Si solo hay una variante, lístala de igual forma."
-            )
-            res_v = model.generate_content([prompt_v, st.session_state.raw_text]).text
-            opciones = [o.strip().replace("*", "") for o in res_v.split(';') if len(o) > 5]
+    idx = st.session_state.anexo_actual_idx
+    if idx < len(st.session_state.lista_anexos):
+        anexo_nombre = st.session_state.lista_anexos[idx]
+        st.header(f"Identificación: {anexo_nombre}")
         
-        col_sel, col_corr = st.columns([2, 1])
-        
-        with col_sel:
-            if opciones:
-                st.markdown(f"##### Se han encontrado {len(opciones)} variante(s) para el Anexo {num}:")
-                seleccion = st.radio("Seleccione el modelo a completar:", opciones, key=f"radio_n{num}")
-                
-                if st.button(f"Confirmar y empezar a llenar {num}"):
-                    st.session_state.version_elegida = seleccion
-                    st.session_state.paso = 3
-                    st.session_state.intentos_ajuste = 0 # Reset al éxito
-                    st.rerun()
-            else:
-                st.warning("No se pudieron identificar variantes automáticamente.")
-
-        with col_corr:
-            st.info("¿La información es incorrecta?")
-            txt_fb = st.text_area("Describa qué anexos faltan o sobran:", key=f"fb_n{num}")
-            if st.button("Registrar Observación y Reintentar"):
-                st.session_state.feedback_actual = txt_fb
-                st.session_state.intentos_ajuste += 1
+        col1, col2 = st.columns(2)
+        with col1:
+            st.info(f"¿Desea procesar este anexo?")
+            if st.button("📝 Llenar este anexo"):
+                st.session_state.variante_seleccionada = anexo_nombre
+                st.session_state.paso = 3
                 st.rerun()
+        with col2:
+            st.warning("Omitir este formato")
+            if st.button("⏩ Saltar este anexo"):
+                st.session_state.anexo_actual_idx += 1
+                st.rerun()
+    else:
+        st.success("Se han recorrido todos los anexos detectados.")
+        if st.button("Reiniciar"):
+            st.session_state.clear()
+            st.rerun()
 
-# --- PASO 3: LLENADO CONTEXTUAL ---
+# PASO 3: LLENADO DE ANEXOS PERSONALIZADO (PÁRRAFOS Y TABLAS)
 elif st.session_state.paso == 3:
-    num = st.session_state.anexo_n
-    st.header(f"Completando: {st.session_state.version_elegida}")
+    anexo = st.session_state.variante_seleccionada
+    st.header(f"Llenado de Anexo Personalizado: {anexo}")
 
-    if 'campos_contexto' not in st.session_state:
-        with st.spinner("Extrayendo estructura del párrafo..."):
-            prompt_c = f"Extrae el texto completo del '{st.session_state.version_elegida}'. Identifica etiquetas [CONSIGNAR...]."
-            res_c = model.generate_content([prompt_c, st.session_state.raw_text]).text
-            encontrados = re.findall(r'\[[^\]]+\]', res_c)
-            st.session_state.campos_contexto = [c for c in encontrados if any(char.isalpha() for char in c)]
-            st.session_state.texto_referencia = res_c
+    # 3.1 Extraer el párrafo y campos (Solo una vez por anexo)
+    if 'campos_anexo' not in st.session_state:
+        with st.spinner("Extrayendo texto legal..."):
+            prompt_p = (
+                f"Busca el contenido completo del '{anexo}'. "
+                "Extrae los párrafos que contienen espacios para completar [......] o etiquetas [CONSIGNAR...]. "
+                "Devuelve el párrafo completo y una lista de las etiquetas encontradas separadas por comas."
+            )
+            res_p = model.generate_content([prompt_p, st.session_state.raw_text]).text
+            # Intentar separar texto de lista de campos
+            st.session_state.texto_borrador = res_p
+            encontrados = re.findall(r'\[[^\]]+\]', res_p)
+            st.session_state.campos_anexo = [c for c in encontrados if any(char.isalpha() for char in c)]
 
-    with st.form(key=f"form_ctx_{num}"):
+    # Interfaz de llenado
+    st.subheader("Borrador del Párrafo")
+    st.markdown(f"*{st.session_state.texto_borrador[:500]}...*") # Previsualización corta
+    
+    with st.form("form_llenado"):
         respuestas = {}
-        for i, campo in enumerate(st.session_state.campos_contexto):
-            val_prev = st.session_state.memoria_datos.get(campo, "")
-            respuestas[campo] = st.text_input(f"Dato para {campo}:", value=val_prev, key=f"inp_{num}_{i}")
+        st.markdown("### Complete los espacios en blanco del párrafo:")
+        for i, campo in enumerate(st.session_state.campos_anexo):
+            # Lógica de datos repetidos: el bot te los pide pero puedes ver qué pusiste antes
+            val_prev = st.session_state.datos_registrados.get(campo, "")
+            respuestas[campo] = st.text_input(f"Dato para {campo}", value=val_prev, key=f"in_{anexo}_{i}")
         
-        if st.form_submit_button("✅ Generar Anexo Final"):
-            st.session_state.memoria_datos.update(respuestas)
-            with st.spinner("Redactando..."):
-                texto_final = st.session_state.texto_referencia
-                for tag, valor in respuestas.items():
-                    if valor: texto_final = texto_final.replace(tag, valor)
-                
-                st.session_state.docx_final = model.generate_content(f"Limpia este texto legal: {texto_final}").text
+        # 3.2 CONSULTA DE TABLA
+        st.markdown("---")
+        llenar_tabla = st.checkbox("He detectado una tabla en este anexo. ¿Deseas completarla?", value=False)
+        datos_tabla = ""
+        if llenar_tabla:
+            datos_tabla = st.text_area("Ingrese los datos de la tabla (o pegue desde Excel):", placeholder="RUC: 20... \nDomicilio: ...")
+
+        if st.form_submit_button("✅ Finalizar y Generar"):
+            st.session_state.datos_registrados.update(respuestas)
+            
+            with st.spinner("Redactando versión final..."):
+                final_prompt = (
+                    f"Redacta el {anexo} completo. Reemplaza los campos {respuestas} en el texto. "
+                    f"Si el usuario dio estos datos de tabla: '{datos_tabla}', inclúyelos en el formato de tabla original. "
+                    "Entrega el texto limpio y formal listo para imprimir."
+                )
+                st.session_state.resultado_docx = model.generate_content(final_prompt).text
                 st.session_state.paso = 4
                 st.rerun()
 
-# --- PASO 4: RESULTADO ---
+# PASO 4: RESULTADO Y DESCARGA
 elif st.session_state.paso == 4:
-    st.success("¡Anexo generado!")
-    st.text_area("Vista previa:", st.session_state.docx_final, height=400)
+    st.success("Anexo generado correctamente.")
+    st.text_area("Vista Previa Final:", st.session_state.resultado_docx, height=400)
     
-    doc_bin = exportar_word(st.session_state.docx_final)
-    st.download_button("⬇️ Descargar Word", data=doc_bin, file_name=f"Anexo_{st.session_state.anexo_n}.docx")
+    # Descarga
+    doc_download = exportar_word(st.session_state.resultado_docx)
+    st.download_button("⬇️ Descargar Anexo en Word", data=doc_download, file_name=f"{st.session_state.variante_seleccionada}.docx")
     
-    if st.button(f"Pasar al Siguiente Anexo ➡️"):
-        st.session_state.anexo_n += 1
-        st.session_state.feedback_actual = ""
-        st.session_state.intentos_ajuste = 0
-        for k in ['campos_contexto', 'texto_referencia', 'version_elegida', 'docx_final']:
+    st.markdown("---")
+    if st.button("Siguiente Anexo ➡️"):
+        st.session_state.anexo_actual_idx += 1
+        # Limpieza para el próximo anexo
+        for k in ['campos_anexo', 'texto_borrador', 'resultado_docx', 'variante_seleccionada']:
             if k in st.session_state: del st.session_state[k]
         st.session_state.paso = 2
         st.rerun()
